@@ -206,6 +206,10 @@ dialog h2{font-size:17px; margin-bottom:14px}
       <div class="summary-card"><div class="label">Variáveis: gasto</div><div class="value" id="b-var-gasto">R$ 0</div></div>
       <div class="summary-card"><div class="label">Variáveis: teto</div><div class="value" id="b-var-teto">R$ 0</div></div>
     </div>
+    <div class="summary-row" id="card-row" style="display:none">
+      <div class="summary-card"><div class="label" id="b-fatura-label">Fatura do mês</div><div class="value" id="b-fatura">R$ 0</div></div>
+      <div class="summary-card"><div class="label">Parcelas futuras</div><div class="value" id="b-futuro">R$ 0</div></div>
+    </div>
     <div class="group-title">Variações do mês (vs último valor registrado)</div>
     <div id="variations"></div>
     <div class="group-title">Gastos variáveis do mês</div>
@@ -230,6 +234,11 @@ dialog h2{font-size:17px; margin-bottom:14px}
         </select>
       </div>
       <button class="ghost" id="ask-permission">Ativar notificações</button>
+    </div>
+    <div class="settings-card">
+      <h3>Cartão de crédito</h3>
+      <p id="card-info">Nenhum cartão configurado. Configure para lançar gastos e contas no crédito — a fatura aparece automaticamente na aba Contas.</p>
+      <button class="ghost" id="edit-card">Configurar cartão</button>
     </div>
     <div class="settings-card">
       <h3>Backup dos dados</h3>
@@ -276,7 +285,15 @@ dialog h2{font-size:17px; margin-bottom:14px}
     </select>
     <div class="hint">Aportes contam como "pagamento a si mesmo" no orçamento.</div>
   </div>
-  <label class="check-inline"><input type="checkbox" id="bill-autopay"> Está em débito automático (só acompanhar)</label>
+  <div class="field">
+    <label for="bill-forma">Como é paga?</label>
+    <select id="bill-forma">
+      <option value="avista">À vista (dinheiro/PIX/débito em conta)</option>
+      <option value="credito">No cartão de crédito</option>
+    </select>
+    <div class="hint" id="bill-forma-hint" style="display:none">Vai para a fatura do ciclo correspondente — não soma nas pendências em dinheiro.</div>
+  </div>
+  <label class="check-inline" id="bill-autopay-wrap"><input type="checkbox" id="bill-autopay"> Está em débito automático (só acompanhar)</label>
   <div id="bill-history"></div>
   <div class="dialog-actions">
     <button class="danger" id="bill-delete" style="display:none">Excluir</button>
@@ -292,8 +309,26 @@ dialog h2{font-size:17px; margin-bottom:14px}
     <input id="exp-desc" type="text" placeholder="Ex.: Mercado, Uber">
   </div>
   <div class="field">
-    <label for="exp-amount">Valor (R$)</label>
-    <input id="exp-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00">
+    <label for="exp-amount">Valor total (R$)</label>
+    <input id="exp-amount" type="number" inputmode="decimal" step="0.01" placeholder="0,00">
+    <div class="hint">Estorno ou reembolso? Lance com valor negativo (ex.: -89,90) — ele abate da fatura/gastos do ciclo certo.</div>
+  </div>
+  <div class="field">
+    <label for="exp-forma">Forma de pagamento</label>
+    <select id="exp-forma">
+      <option value="avista">À vista (dinheiro/PIX/débito)</option>
+      <option value="credito">Cartão de crédito</option>
+    </select>
+  </div>
+  <div class="field" id="exp-parcelas-field" style="display:none">
+    <label for="exp-parcelas">Parcelas</label>
+    <input id="exp-parcelas" type="number" inputmode="numeric" min="1" max="48" value="1">
+    <div class="hint">Informe o valor total acima; o app divide entre as faturas.</div>
+  </div>
+  <div class="field">
+    <label for="exp-date">Data da compra</label>
+    <input id="exp-date" type="date">
+    <div class="hint">A data define em qual fatura a compra cai.</div>
   </div>
   <div class="dialog-actions">
     <button class="cancel" id="exp-cancel">Cancelar</button>
@@ -330,6 +365,47 @@ dialog h2{font-size:17px; margin-bottom:14px}
     <button class="danger" id="income-delete" style="display:none">Excluir</button>
     <button class="cancel" id="income-cancel">Cancelar</button>
     <button class="save" id="income-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="card-dialog">
+  <h2>Cartão de crédito</h2>
+  <div class="field">
+    <label for="card-name">Nome</label>
+    <input id="card-name" type="text" placeholder="Ex.: Inter Mastercard">
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="card-close">Dia de fechamento</label>
+      <input id="card-close" type="number" inputmode="numeric" min="1" max="31" placeholder="6">
+    </div>
+    <div class="field">
+      <label for="card-due">Dia de vencimento</label>
+      <input id="card-due" type="number" inputmode="numeric" min="1" max="31" placeholder="12">
+    </div>
+  </div>
+  <div class="hint" style="margin-bottom:12px">Compra até o dia do fechamento entra na fatura do mês; depois dele, na do mês seguinte.</div>
+  <div class="dialog-actions">
+    <button class="cancel" id="card-cancel">Cancelar</button>
+    <button class="save" id="card-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="conf-dialog">
+  <h2>Conferir fatura</h2>
+  <div class="field">
+    <label>Total calculado pelo app</label>
+    <div style="font-size:20px;font-weight:600" id="conf-app-total">R$ 0,00</div>
+  </div>
+  <div id="conf-items" style="max-height:180px;overflow-y:auto;margin-bottom:12px"></div>
+  <div class="field">
+    <label for="conf-bank">Total da fatura no banco (R$)</label>
+    <input id="conf-bank" type="number" inputmode="decimal" step="0.01" min="0">
+    <div class="hint">Se divergir, a diferença entra como "ajuste não identificado" — sinal de lançamento esquecido ou cobrança estranha.</div>
+  </div>
+  <div class="dialog-actions">
+    <button class="cancel" id="conf-cancel">Cancelar</button>
+    <button class="save" id="conf-save">Confirmar fatura</button>
   </div>
 </dialog>
 
@@ -381,6 +457,9 @@ function load() {
           : [];
       }
       if (!data.incomeRecords) data.incomeRecords = {};
+      if (!('card' in data)) data.card = null;
+      if (!data.faturaAjuste) data.faturaAjuste = {};
+      if (!data.faturaConferida) data.faturaConferida = {};
       return data;
     }
   } catch (_) {}
@@ -391,6 +470,9 @@ function load() {
     bills: [],
     payments: {},
     expenses: {},
+    card: null,
+    faturaAjuste: {},
+    faturaConferida: {},
     settings: { notifyDaysBefore: 3 }
   };
 }
@@ -449,6 +531,72 @@ function prevIncomeRecorded(src, mk) {
   return h.length ? h[h.length - 1] : null;
 }
 
+// ---------- Cartão de crédito ----------
+const CARD_ID = '__card__';
+function shiftMk(mk, n) {
+  const [y, m] = mk.split('-').map(Number);
+  return monthKey(new Date(y, m - 1 + n, 1));
+}
+function cycleOf(dateStr) {
+  const d = new Date(dateStr);
+  const mk = monthKey(d);
+  return d.getDate() > state.card.closeDay ? shiftMk(mk, 1) : mk;
+}
+function chargeInstallments(e) {
+  const n = (e.parcelas && e.parcelas > 1) ? e.parcelas : 1;
+  const per = e.amount / n;
+  const first = cycleOf(e.date);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push({ mk: shiftMk(first, i), amount: per, label: n > 1 ? (i + 1) + '/' + n : '' });
+  return out;
+}
+function faturaComponents(mk) {
+  if (!state.card) return { total: 0, items: [] };
+  const items = [];
+  Object.values(state.expenses).flat().forEach(e => {
+    if ((e.forma || 'avista') !== 'credito' || !e.date) return;
+    chargeInstallments(e).forEach(ch => {
+      if (ch.mk === mk) items.push({ desc: e.desc + (ch.label ? ' ' + ch.label : ''), amount: ch.amount });
+    });
+  });
+  state.bills.filter(b => b.active !== false && b.forma === 'credito').forEach(b => {
+    const chargeMk = b.day <= state.card.closeDay ? mk : shiftMk(mk, -1);
+    items.push({ desc: b.name, amount: effectiveAmount(b, chargeMk) });
+  });
+  const ajuste = state.faturaAjuste[mk] || 0;
+  if (ajuste) items.push({ desc: 'Ajuste (não identificado)', amount: ajuste });
+  return { total: items.reduce((s, i) => s + i.amount, 0), items };
+}
+function futureCommitted(afterMk) {
+  if (!state.card) return 0;
+  let s = 0;
+  Object.values(state.expenses).flat().forEach(e => {
+    if ((e.forma || 'avista') !== 'credito' || !e.date) return;
+    chargeInstallments(e).forEach(ch => { if (ch.mk > afterMk) s += ch.amount; });
+  });
+  return s;
+}
+function faturaClosed(mk) {
+  const [y, m] = mk.split('-').map(Number);
+  const closeDate = new Date(y, m - 1, state.card.closeDay, 23, 59, 59);
+  return new Date() > closeDate;
+}
+function faturaPseudoBill(mk) {
+  const f = faturaComponents(mk);
+  return { id: CARD_ID, name: 'Fatura — ' + state.card.name, amount: f.total, day: state.card.dueDay, category: 'fixa', autopay: false, forma: 'avista', active: true };
+}
+// Variáveis por competência: à vista no mês da compra; crédito parcela a parcela
+function competVar(mk) {
+  let s = 0;
+  Object.values(state.expenses).flat().forEach(e => {
+    if ((e.forma || 'avista') === 'credito' && e.date && state.card) {
+      chargeInstallments(e).forEach(ch => { if (ch.mk === mk) s += ch.amount; });
+    }
+  });
+  (state.expenses[mk] || []).forEach(e => { if ((e.forma || 'avista') !== 'credito') s += e.amount; });
+  return s;
+}
+
 function billStatus(bill, mk) {
   const paid = state.payments[mk] && state.payments[mk][bill.id];
   if (paid) return 'paid';
@@ -483,7 +631,8 @@ function renderRuler(mk) {
     if (isCurrentMonth() && d === today.getDate()) cell.classList.add('today');
     const dot = document.createElement('span');
     dot.className = 'dot';
-    const due = state.bills.filter(b => b.active !== false && clampDay(b.day, viewDate) === d);
+    const due = state.bills.filter(b => b.active !== false && b.forma !== 'credito' && clampDay(b.day, viewDate) === d);
+    if (state.card && clampDay(state.card.dueDay, viewDate) === d) due.push(faturaPseudoBill(mk));
     if (due.length) {
       const statuses = due.map(b => billStatus(b, mk));
       if (statuses.includes('late')) dot.classList.add('late');
@@ -505,7 +654,7 @@ function renderBills(mk) {
   const bills = state.bills.filter(b => b.active !== false).slice()
     .sort((a, b) => a.day - b.day);
 
-  if (!bills.length) {
+  if (!bills.length && !state.card) {
     list.innerHTML = '<div class="empty">Nenhuma conta cadastrada ainda.<br>Comece pelas que <strong>não</strong> estão em débito automático.</div>';
     document.getElementById('sum-pendente').textContent = fmt(0);
     document.getElementById('sum-pago').textContent = fmt(0);
@@ -513,26 +662,38 @@ function renderBills(mk) {
   }
 
   let pendente = 0, pago = 0;
-  const groups = { manual: [], auto: [] };
-  bills.forEach(b => (b.autopay ? groups.auto : groups.manual).push(b));
+  const groups = { manual: [], auto: [], cartao: [] };
+  bills.forEach(b => {
+    if (b.forma === 'credito' && state.card) groups.cartao.push(b);
+    else (b.autopay ? groups.auto : groups.manual).push(b);
+  });
 
-  const addGroup = (title, arr) => {
+  const addGroup = (title, arr, onCard) => {
     if (!arr.length) return;
     const t = document.createElement('div');
     t.className = 'group-title';
     t.textContent = title;
     list.appendChild(t);
     arr.forEach(bill => {
+      const isFatura = bill.id === CARD_ID;
       const st = billStatus(bill, mk);
       const paidInfo = state.payments[mk] && state.payments[mk][bill.id];
-      const eff = effectiveAmount(bill, mk);
-      if (paidInfo) pago += eff; else if (!bill.autopay) pendente += eff;
+      const eff = isFatura ? (paidInfo && typeof paidInfo.amount === 'number' ? paidInfo.amount : bill.amount) : effectiveAmount(bill, mk);
+      if (!onCard) { if (paidInfo) pago += eff; else if (!bill.autopay) pendente += eff; }
 
       const el = document.createElement('div');
       el.className = 'bill' + (st === 'paid' ? ' paid' : '');
       const day = clampDay(bill.day, viewDate);
       let badge = '';
-      if (st === 'late') badge = '<span class="badge late">atrasada</span>';
+      if (onCard) badge = '<span class="badge auto">no cartão</span>';
+      else if (isFatura && st !== 'paid') {
+        badge = faturaClosed(mk)
+          ? (state.faturaConferida[mk] ? '' : '<span class="badge soon">fechada — conferir</span>')
+          : '<span class="badge auto">em aberto · fecha dia ' + state.card.closeDay + '</span>';
+        if (st === 'late') badge += ' <span class="badge late">atrasada</span>';
+        else if (st === 'soon') badge += ' <span class="badge soon">vence em breve</span>';
+      }
+      else if (st === 'late') badge = '<span class="badge late">atrasada</span>';
       else if (st === 'soon') badge = '<span class="badge soon">vence em breve</span>';
       else if (st === 'auto') badge = '<span class="badge auto">débito automático</span>';
       else if (st === 'paid') badge = '<span class="badge paid">paga</span>';
@@ -547,19 +708,26 @@ function renderBills(mk) {
       }
 
       el.innerHTML =
-        '<button class="check" aria-label="' + (bill.autopay ? 'Confirmar valor debitado' : 'Marcar como paga') + '">✓</button>' +
+        '<button class="check" aria-label="' + (bill.autopay || onCard ? 'Confirmar valor' : 'Marcar como paga') + '">✓</button>' +
         '<div class="info"><div class="name">' + esc(bill.name) + '</div>' +
         '<div class="meta">Dia ' + day + ' · ' + CAT_LABEL[bill.category] + ' ' + badge + '</div></div>' +
         '<div class="amount">' + fmt(eff) + varTag + '</div>';
 
       el.querySelector('.check').addEventListener('click', () => togglePaid(bill.id, mk));
-      el.querySelector('.info').addEventListener('click', () => openBillDialog(bill.id));
+      el.querySelector('.info').addEventListener('click', () => {
+        if (isFatura) { if (!paidInfo) openConfDialog(mk); }
+        else openBillDialog(bill.id);
+      });
       list.appendChild(el);
     });
   };
 
-  addGroup('Pagamento manual', groups.manual);
-  addGroup('Débito automático', groups.auto);
+  addGroup('Pagamento manual', groups.manual, false);
+  addGroup('Débito automático', groups.auto, false);
+  if (state.card) {
+    addGroup('Cartão de crédito', [faturaPseudoBill(mk)], false);
+    addGroup('Contas na fatura', groups.cartao, true);
+  }
 
   document.getElementById('sum-pendente').textContent = fmt(pendente);
   document.getElementById('sum-pago').textContent = fmt(pago);
@@ -567,13 +735,23 @@ function renderBills(mk) {
 
 function renderBudget(mk) {
   const bills = state.bills.filter(b => b.active !== false);
+  const avista = b => b.forma !== 'credito' || !state.card;
   const totFixa = bills.filter(b => b.category === 'fixa').reduce((s, b) => s + effectiveAmount(b, mk), 0);
   const totApto = bills.filter(b => b.category === 'apto').reduce((s, b) => s + effectiveAmount(b, mk), 0);
   const totAporte = bills.filter(b => b.category === 'aporte').reduce((s, b) => s + effectiveAmount(b, mk), 0);
+  // Caixa: só o que sai da conta neste mês (contas à vista + fatura + variáveis à vista)
+  const caixaFixa = bills.filter(b => b.category === 'fixa' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
+  const caixaApto = bills.filter(b => b.category === 'apto' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
+  const caixaAporte = bills.filter(b => b.category === 'aporte' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
   const expenses = state.expenses[mk] || [];
-  const totVar = expenses.reduce((s, e) => s + e.amount, 0);
+  const varAvista = expenses.filter(e => (e.forma || 'avista') !== 'credito').reduce((s, e) => s + e.amount, 0);
+  const totVar = competVar(mk);
+  const fatura = state.card ? faturaComponents(mk) : { total: 0 };
+  const faturaPaga = state.payments[mk] && state.payments[mk][CARD_ID];
+  const faturaValor = faturaPaga && typeof faturaPaga.amount === 'number' ? faturaPaga.amount : fatura.total;
   const income = monthIncome(mk);
-  const sobra = income - totFixa - totApto - totAporte - Math.max(totVar, state.variableBudget || 0);
+  const sobra = income - caixaFixa - caixaApto - caixaAporte - faturaValor
+    - Math.max(varAvista, Math.max(0, (state.variableBudget || 0) - (totVar - varAvista)));
 
   document.getElementById('b-renda').textContent = fmt(income);
   const sobraEl = document.getElementById('b-sobra');
@@ -581,6 +759,17 @@ function renderBudget(mk) {
   sobraEl.className = 'value ' + (sobra >= 0 ? 'pos' : 'neg');
   document.getElementById('b-var-gasto').textContent = fmt(totVar);
   document.getElementById('b-var-teto').textContent = fmt(state.variableBudget || 0);
+
+  const cardRow = document.getElementById('card-row');
+  if (state.card) {
+    cardRow.style.display = 'flex';
+    document.getElementById('b-fatura-label').textContent =
+      faturaClosed(mk) ? 'Fatura (vence dia ' + state.card.dueDay + ')' : 'Fatura em formação';
+    document.getElementById('b-fatura').textContent = fmt(faturaValor);
+    document.getElementById('b-futuro').textContent = fmt(futureCommitted(mk));
+  } else {
+    cardRow.style.display = 'none';
+  }
 
   const incList = document.getElementById('income-list');
   incList.innerHTML = '';
@@ -650,11 +839,16 @@ function renderBudget(mk) {
     expenses.slice().reverse().forEach(e => {
       const el = document.createElement('div');
       el.className = 'expense';
-      el.innerHTML = '<div><div>' + esc(e.desc) + '</div><div class="d">' +
+      const credTag = (e.forma === 'credito')
+        ? ' <span class="badge auto">cartão' + (e.parcelas > 1 ? ' ' + e.parcelas + 'x' : '') + '</span>'
+        : '';
+      const estTag = e.amount < 0 ? ' <span class="badge paid" style="background:var(--green-soft);color:var(--green)">estorno</span>' : '';
+      el.innerHTML = '<div><div>' + esc(e.desc) + credTag + estTag + '</div><div class="d">' +
         new Date(e.date).toLocaleDateString('pt-BR') + '</div></div>' +
-        '<div style="display:flex;align-items:center;gap:8px"><strong>' + fmt(e.amount) +
+        '<div style="display:flex;align-items:center;gap:8px"><strong' + (e.amount < 0 ? ' class="var-down"' : '') + '>' + fmt(e.amount) +
         '</strong><button aria-label="Remover">✕</button></div>';
       el.querySelector('button').addEventListener('click', () => {
+        if (e.forma === 'credito' && e.parcelas > 1 && !confirm('Excluir esta compra parcelada? Todas as parcelas (passadas e futuras) saem das faturas.')) return;
         state.expenses[mk] = (state.expenses[mk] || []).filter(x => x.id !== e.id);
         save(); render();
       });
@@ -676,9 +870,11 @@ function togglePaid(billId, mk) {
     save(); render();
     return;
   }
-  const bill = state.bills.find(b => b.id === billId);
+  const bill = billId === CARD_ID ? faturaPseudoBill(mk) : state.bills.find(b => b.id === billId);
   payingBillId = billId; payingMk = mk;
-  document.getElementById('pay-title').textContent = bill.autopay ? 'Confirmar débito — ' + bill.name : 'Pagar — ' + bill.name;
+  document.getElementById('pay-title').textContent =
+    billId === CARD_ID ? 'Pagar fatura — ' + state.card.name :
+    (bill.autopay || bill.forma === 'credito') ? 'Confirmar valor — ' + bill.name : 'Pagar — ' + bill.name;
   document.getElementById('pay-amount').value = bill.amount || '';
   const prev = prevRecorded(bill, mk);
   document.getElementById('pay-hint').textContent = prev
@@ -708,6 +904,12 @@ function openBillDialog(id) {
   document.getElementById('bill-day').value = b ? b.day : '';
   document.getElementById('bill-category').value = b ? b.category : 'fixa';
   document.getElementById('bill-autopay').checked = b ? !!b.autopay : false;
+  const formaSel = document.getElementById('bill-forma');
+  formaSel.value = (b && b.forma === 'credito') ? 'credito' : 'avista';
+  formaSel.querySelector('option[value="credito"]').disabled = !state.card;
+  formaSel.querySelector('option[value="credito"]').textContent =
+    state.card ? 'No cartão de crédito' : 'No cartão de crédito (configure em Ajustes)';
+  syncBillForma();
   document.getElementById('bill-delete').style.display = b ? 'block' : 'none';
   const histEl = document.getElementById('bill-history');
   histEl.innerHTML = '';
@@ -731,17 +933,24 @@ function openBillDialog(id) {
 }
 document.getElementById('add-bill').addEventListener('click', () => openBillDialog(null));
 document.getElementById('bill-cancel').addEventListener('click', () => billDialog.close());
+function syncBillForma() {
+  const credito = document.getElementById('bill-forma').value === 'credito';
+  document.getElementById('bill-autopay-wrap').style.display = credito ? 'none' : 'flex';
+  document.getElementById('bill-forma-hint').style.display = credito ? 'block' : 'none';
+}
+document.getElementById('bill-forma').addEventListener('change', syncBillForma);
 document.getElementById('bill-save').addEventListener('click', () => {
   const name = document.getElementById('bill-name').value.trim();
   const amount = parseFloat(document.getElementById('bill-amount').value) || 0;
   const day = Math.min(31, Math.max(1, parseInt(document.getElementById('bill-day').value) || 1));
   const category = document.getElementById('bill-category').value;
-  const autopay = document.getElementById('bill-autopay').checked;
+  const forma = document.getElementById('bill-forma').value;
+  const autopay = forma === 'credito' ? false : document.getElementById('bill-autopay').checked;
   if (!name) return;
   if (editingBillId) {
-    Object.assign(state.bills.find(b => b.id === editingBillId), { name, amount, day, category, autopay });
+    Object.assign(state.bills.find(b => b.id === editingBillId), { name, amount, day, category, autopay, forma });
   } else {
-    state.bills.push({ id: uid(), name, amount, day, category, autopay, active: true });
+    state.bills.push({ id: uid(), name, amount, day, category, autopay, forma, active: true });
   }
   save(); billDialog.close(); render();
 });
@@ -754,19 +963,38 @@ document.getElementById('bill-delete').addEventListener('click', () => {
 });
 
 const expenseDialog = document.getElementById('expense-dialog');
+const expFormaSel = document.getElementById('exp-forma');
+expFormaSel.addEventListener('change', () => {
+  document.getElementById('exp-parcelas-field').style.display =
+    (expFormaSel.value === 'credito') ? 'block' : 'none';
+});
 document.getElementById('add-expense').addEventListener('click', () => {
   document.getElementById('exp-desc').value = '';
   document.getElementById('exp-amount').value = '';
+  document.getElementById('exp-parcelas').value = '1';
+  expFormaSel.value = 'avista';
+  const hasCard = !!state.card;
+  expFormaSel.querySelector('option[value="credito"]').disabled = !hasCard;
+  expFormaSel.querySelector('option[value="credito"]').textContent =
+    hasCard ? 'Cartão de crédito' : 'Cartão de crédito (configure em Ajustes)';
+  document.getElementById('exp-parcelas-field').style.display = 'none';
+  const d = new Date();
+  document.getElementById('exp-date').value =
+    d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   expenseDialog.showModal();
 });
 document.getElementById('exp-cancel').addEventListener('click', () => expenseDialog.close());
 document.getElementById('exp-save').addEventListener('click', () => {
   const desc = document.getElementById('exp-desc').value.trim();
   const amount = parseFloat(document.getElementById('exp-amount').value) || 0;
+  const forma = expFormaSel.value;
+  const parcelas = forma === 'credito' ? Math.max(1, parseInt(document.getElementById('exp-parcelas').value) || 1) : 1;
+  const dateStr = document.getElementById('exp-date').value;
   if (!desc || !amount) return;
-  const mk = monthKey(viewDate);
-  state.expenses[mk] = state.expenses[mk] || [];
-  state.expenses[mk].push({ id: uid(), desc, amount, date: new Date().toISOString() });
+  const date = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
+  const mkStore = monthKey(date);
+  state.expenses[mkStore] = state.expenses[mkStore] || [];
+  state.expenses[mkStore].push({ id: uid(), desc, amount, date: date.toISOString(), forma, parcelas });
   save(); expenseDialog.close(); render();
 });
 
@@ -859,6 +1087,63 @@ document.getElementById('income-record-save').addEventListener('click', () => {
 document.getElementById('income-record-clear').addEventListener('click', () => {
   if (state.incomeRecords[recordingMk]) delete state.incomeRecords[recordingMk][recordingIncomeId];
   save(); incomeRecordDialog.close(); render();
+});
+
+// ---------- Cartão: configuração e conferência ----------
+const cardDialog = document.getElementById('card-dialog');
+document.getElementById('edit-card').addEventListener('click', () => {
+  document.getElementById('card-name').value = state.card ? state.card.name : '';
+  document.getElementById('card-close').value = state.card ? state.card.closeDay : '';
+  document.getElementById('card-due').value = state.card ? state.card.dueDay : '';
+  cardDialog.showModal();
+});
+document.getElementById('card-cancel').addEventListener('click', () => cardDialog.close());
+document.getElementById('card-save').addEventListener('click', () => {
+  const name = document.getElementById('card-name').value.trim();
+  const closeDay = Math.min(31, Math.max(1, parseInt(document.getElementById('card-close').value) || 0));
+  const dueDay = Math.min(31, Math.max(1, parseInt(document.getElementById('card-due').value) || 0));
+  if (!name || !closeDay || !dueDay) return;
+  state.card = { name, closeDay, dueDay };
+  save(); cardDialog.close(); render(); renderCardInfo();
+});
+function renderCardInfo() {
+  const el = document.getElementById('card-info');
+  const btn = document.getElementById('edit-card');
+  if (state.card) {
+    el.textContent = state.card.name + ' — fecha dia ' + state.card.closeDay + ', vence dia ' + state.card.dueDay + '. Compras no crédito vão para a fatura do ciclo correto e não pesam duas vezes no orçamento.';
+    btn.textContent = 'Editar cartão';
+  }
+}
+
+const confDialog = document.getElementById('conf-dialog');
+let confMk = null;
+function openConfDialog(mk) {
+  if (!faturaClosed(mk)) return; // fatura ainda em aberto, nada a conferir
+  confMk = mk;
+  const savedAjuste = state.faturaAjuste[mk] || 0;
+  delete state.faturaAjuste[mk];
+  const f = faturaComponents(mk); // total sem ajuste
+  state.faturaAjuste[mk] = savedAjuste || undefined;
+  if (!savedAjuste) delete state.faturaAjuste[mk];
+  document.getElementById('conf-app-total').textContent = fmt(f.total);
+  const itemsEl = document.getElementById('conf-items');
+  itemsEl.innerHTML = f.items.length
+    ? f.items.map(i => '<div class="hist-row"><span class="mk">' + esc(i.desc) + '</span><span>' + fmt(i.amount) + '</span></div>').join('')
+    : '<div class="hint">Nenhum lançamento neste ciclo.</div>';
+  document.getElementById('conf-bank').value = savedAjuste ? (f.total + savedAjuste).toFixed(2) : f.total.toFixed(2);
+  confDialog.showModal();
+  document.getElementById('conf-bank').select();
+}
+document.getElementById('conf-cancel').addEventListener('click', () => confDialog.close());
+document.getElementById('conf-save').addEventListener('click', () => {
+  const bank = parseFloat(document.getElementById('conf-bank').value);
+  if (isNaN(bank) || bank < 0) return;
+  delete state.faturaAjuste[confMk];
+  const semAjuste = faturaComponents(confMk).total;
+  const diff = Math.round((bank - semAjuste) * 100) / 100;
+  if (Math.abs(diff) >= 0.01) state.faturaAjuste[confMk] = diff;
+  state.faturaConferida[confMk] = true;
+  save(); confDialog.close(); render();
 });
 
 // ---------- Tabs ----------
@@ -970,7 +1255,10 @@ document.getElementById('import-file').addEventListener('change', (e) => {
           : [];
       }
       if (!data.incomeRecords) data.incomeRecords = {};
-      state = data; save(); render();
+      if (!('card' in data)) data.card = null;
+      if (!data.faturaAjuste) data.faturaAjuste = {};
+      if (!data.faturaConferida) data.faturaConferida = {};
+      state = data; save(); render(); renderCardInfo();
       alert('Backup importado com sucesso.');
     } catch (_) { alert('Arquivo inválido.'); }
   };
@@ -982,6 +1270,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').then(() => notifyDue()).catch(() => {});
 }
 render();
+renderCardInfo();
 refreshNotifyStatus();
 </script>
 </body>
