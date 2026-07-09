@@ -118,10 +118,11 @@ dialog::backdrop{background:rgba(20,38,31,0.4)}
 dialog h2{font-size:17px; margin-bottom:14px}
 .field{margin-bottom:12px}
 .field label{display:block; font-size:13px; color:var(--muted); margin-bottom:4px}
-.field input,.field select{
+.field input,.field select,.field textarea{
   width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px;
   font-size:15px; background:var(--bg); color:var(--ink);
 }
+.field textarea{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; resize:vertical}
 .field-row{display:flex; gap:10px}
 .field-row .field{flex:1}
 .field .hint{font-size:11px; color:var(--muted); margin-top:3px}
@@ -218,6 +219,32 @@ dialog h2{font-size:17px; margin-bottom:14px}
     <button class="ghost" id="edit-budget">Editar teto de gastos variáveis</button>
   </section>
 
+  <section id="tab-aportes">
+    <div class="summary-row">
+      <div class="summary-card"><div class="label">Aportado do salário</div><div class="value pos" id="ap-mes">R$ 0</div></div>
+      <div class="summary-card" id="ap-meta-card" style="cursor:pointer"><div class="label">Meta do mês ✎</div><div class="value" id="ap-meta">R$ 0</div></div>
+    </div>
+    <div class="budget-bar" id="ap-progress"></div>
+    <div class="summary-row" style="margin-top:12px">
+      <div class="summary-card" id="pot-reserva" style="cursor:pointer"><div class="label">Reserva de emergência +/−</div><div class="value" id="ap-reserva">R$ 0</div></div>
+      <div class="summary-card" id="pot-caixa" style="cursor:pointer"><div class="label">Caixa de oportunidade +/−</div><div class="value" id="ap-caixa">R$ 0</div></div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-card"><div class="label">Dividendos p/ reinvestir</div><div class="value" id="ap-div">R$ 0</div></div>
+      <div class="summary-card"><div class="label">Investido no mês</div><div class="value" id="ap-total-mes">R$ 0</div></div>
+    </div>
+    <div class="group-title" style="display:flex;justify-content:space-between;align-items:baseline"><span>Posição (a custo)</span><span id="quotes-stamp" style="text-transform:none;font-weight:400;letter-spacing:0"></span></div>
+    <div id="position-list"></div>
+    <button class="ghost" id="refresh-quotes">Atualizar cotações</button>
+    <div class="group-title">Movimentos do mês</div>
+    <div id="moves-list"></div>
+    <button class="primary" id="add-buy">+ Compra</button>
+    <button class="ghost" id="add-div">Registrar dividendo recebido</button>
+    <button class="ghost" id="add-sell">Registrar venda</button>
+    <button class="ghost" id="add-init">Posição inicial (colar/importar CSV)</button>
+    <button class="ghost" id="export-csv">Exportar CSV (p/ Sheets)</button>
+  </section>
+
   <section id="tab-ajustes">
     <div class="settings-card">
       <h3>Notificações</h3>
@@ -241,6 +268,15 @@ dialog h2{font-size:17px; margin-bottom:14px}
       <button class="ghost" id="edit-card">Configurar cartão</button>
     </div>
     <div class="settings-card">
+      <h3>Cotações (brapi.dev)</h3>
+      <p>Crie uma conta gratuita em brapi.dev, gere seu token e cole aqui. O botão "Atualizar cotações" na aba Aportes usa esse token (fica salvo só neste aparelho). Plano gratuito: ~38 atualizações/dia para 13 papéis.</p>
+      <div class="field">
+        <label for="brapi-token">Token da brapi</label>
+        <input id="brapi-token" type="text" placeholder="Cole o token aqui" autocomplete="off">
+      </div>
+      <button class="ghost" id="save-token">Salvar token</button>
+    </div>
+    <div class="settings-card">
       <h3>Backup dos dados</h3>
       <p>Tudo fica salvo apenas neste aparelho. Exporte um arquivo JSON de tempos em tempos.</p>
       <button class="ghost" id="export-data">Exportar backup (.json)</button>
@@ -257,6 +293,7 @@ dialog h2{font-size:17px; margin-bottom:14px}
 <nav>
   <button data-tab="contas" class="active"><span class="ico">✓</span>Contas</button>
   <button data-tab="orcamento"><span class="ico">◔</span>Orçamento</button>
+  <button data-tab="aportes"><span class="ico">↗</span>Aportes</button>
   <button data-tab="ajustes"><span class="ico">⚙</span>Ajustes</button>
 </nav>
 
@@ -281,9 +318,8 @@ dialog h2{font-size:17px; margin-bottom:14px}
     <select id="bill-category">
       <option value="fixa">Conta fixa</option>
       <option value="apto">Parcela do apartamento</option>
-      <option value="aporte">Aporte (investimento)</option>
     </select>
-    <div class="hint">Aportes contam como "pagamento a si mesmo" no orçamento.</div>
+    <div class="hint">Aportes agora têm aba própria — a meta e os lançamentos ficam lá.</div>
   </div>
   <div class="field">
     <label for="bill-forma">Como é paga?</label>
@@ -409,6 +445,158 @@ dialog h2{font-size:17px; margin-bottom:14px}
   </div>
 </dialog>
 
+<dialog id="buy-dialog">
+  <h2>Compra de ação</h2>
+  <div class="field-row">
+    <div class="field">
+      <label for="buy-ticker">Ticker</label>
+      <input id="buy-ticker" type="text" placeholder="CMIG4" style="text-transform:uppercase">
+    </div>
+    <div class="field">
+      <label for="buy-qty">Quantidade</label>
+      <input id="buy-qty" type="number" inputmode="decimal" step="any" min="0" placeholder="10">
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="buy-price">Preço unitário (R$)</label>
+      <input id="buy-price" type="number" inputmode="decimal" step="0.01" min="0">
+    </div>
+    <div class="field">
+      <label for="buy-date">Data</label>
+      <input id="buy-date" type="date">
+    </div>
+  </div>
+  <div class="field">
+    <label for="buy-origem">Origem do dinheiro</label>
+    <select id="buy-origem">
+      <option value="renda">Renda do mês (pesa no orçamento)</option>
+      <option value="caixa">Caixa de oportunidade</option>
+      <option value="reserva">Reserva de emergência</option>
+      <option value="dividendos">Dividendos recebidos</option>
+    </select>
+    <div class="hint">Só "renda do mês" impacta a sobra. As demais são remanejamento patrimonial.</div>
+  </div>
+  <div class="dialog-actions">
+    <button class="cancel" id="buy-cancel">Cancelar</button>
+    <button class="save" id="buy-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="sell-dialog">
+  <h2>Venda de ação</h2>
+  <div class="field-row">
+    <div class="field">
+      <label for="sell-ticker">Ticker</label>
+      <select id="sell-ticker"></select>
+    </div>
+    <div class="field">
+      <label for="sell-qty">Quantidade</label>
+      <input id="sell-qty" type="number" inputmode="decimal" step="any" min="0">
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="sell-price">Preço unitário (R$)</label>
+      <input id="sell-price" type="number" inputmode="decimal" step="0.01" min="0">
+    </div>
+    <div class="field">
+      <label for="sell-date">Data</label>
+      <input id="sell-date" type="date">
+    </div>
+  </div>
+  <div class="field">
+    <label for="sell-destino">O dinheiro vai para</label>
+    <select id="sell-destino">
+      <option value="caixa">Caixa de oportunidade</option>
+      <option value="reserva">Reserva de emergência</option>
+    </select>
+  </div>
+  <div class="dialog-actions">
+    <button class="cancel" id="sell-cancel">Cancelar</button>
+    <button class="save" id="sell-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="div-dialog">
+  <h2>Dividendo recebido</h2>
+  <div class="field-row">
+    <div class="field">
+      <label for="div-ticker">Ticker</label>
+      <input id="div-ticker" type="text" placeholder="KLBN4" style="text-transform:uppercase">
+    </div>
+    <div class="field">
+      <label for="div-amount">Valor (R$)</label>
+      <input id="div-amount" type="number" inputmode="decimal" step="0.01" min="0">
+    </div>
+  </div>
+  <div class="field">
+    <label for="div-date">Data</label>
+    <input id="div-date" type="date">
+  </div>
+  <div class="hint" style="margin-bottom:12px">Entra no saldo de dividendos p/ reinvestir. Não conta como renda do mês.</div>
+  <div class="dialog-actions">
+    <button class="cancel" id="div-cancel">Cancelar</button>
+    <button class="save" id="div-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="init-dialog">
+  <h2>Posição inicial — importar CSV</h2>
+  <div class="hint" style="margin-bottom:8px">Uma linha por papel: <strong>TICKER;quantidade;preço médio</strong>. Aceita tab, "R$" e vírgula decimal (dá pra colar direto da planilha).</div>
+  <div class="field">
+    <textarea id="init-text" rows="8" placeholder="BMGB4;1484;3,35
+CXSE3;210;13,52
+CMIG4;165;12,02"></textarea>
+  </div>
+  <button class="ghost" id="init-file-btn" style="margin-top:0">…ou escolher arquivo .csv</button>
+  <input type="file" id="init-file" accept=".csv,.txt" hidden>
+  <div class="hint" id="init-preview" style="margin:10px 0"></div>
+  <div class="dialog-actions">
+    <button class="cancel" id="init-cancel">Cancelar</button>
+    <button class="save" id="init-save">Importar</button>
+  </div>
+</dialog>
+
+<dialog id="pot-dialog">
+  <h2 id="pot-title">Reserva de emergência</h2>
+  <div class="field">
+    <label for="pot-tipo">Movimento</label>
+    <select id="pot-tipo">
+      <option value="renda">Entrada — do salário (pesa no orçamento)</option>
+      <option value="outro">Entrada — rendimento/outro (não pesa)</option>
+      <option value="saida">Saída — uso/emergência (não pesa)</option>
+    </select>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="pot-amount">Valor (R$)</label>
+      <input id="pot-amount" type="number" inputmode="decimal" step="0.01" min="0">
+    </div>
+    <div class="field">
+      <label for="pot-date">Data</label>
+      <input id="pot-date" type="date">
+    </div>
+  </div>
+  <div class="dialog-actions">
+    <button class="cancel" id="pot-cancel">Cancelar</button>
+    <button class="save" id="pot-save">Salvar</button>
+  </div>
+</dialog>
+
+<dialog id="meta-dialog">
+  <h2>Meta de aporte mensal</h2>
+  <div class="field">
+    <label for="meta-amount">Meta (R$)</label>
+    <input id="meta-amount" type="number" inputmode="decimal" step="0.01" min="0">
+    <div class="hint">Quanto do salário você quer investir por mês (ações + potes).</div>
+  </div>
+  <div class="dialog-actions">
+    <button class="cancel" id="meta-cancel">Cancelar</button>
+    <button class="save" id="meta-save">Salvar</button>
+  </div>
+</dialog>
+
 <dialog id="income-record-dialog">
   <h2 id="income-record-title">Registrar recebimento</h2>
   <div class="field">
@@ -460,6 +648,12 @@ function load() {
       if (!('card' in data)) data.card = null;
       if (!data.faturaAjuste) data.faturaAjuste = {};
       if (!data.faturaConferida) data.faturaConferida = {};
+      if (!data.invest) {
+        data.invest = { meta: 0, moves: [], quotes: {}, brapiToken: '' };
+        const aporteBills = (data.bills || []).filter(b => b.active !== false && b.category === 'aporte');
+        data.invest.meta = aporteBills.reduce((s, b) => s + b.amount, 0);
+        aporteBills.forEach(b => { b.active = false; });
+      }
       return data;
     }
   } catch (_) {}
@@ -473,6 +667,7 @@ function load() {
     card: null,
     faturaAjuste: {},
     faturaConferida: {},
+    invest: { meta: 0, moves: [], quotes: {}, brapiToken: '' },
     settings: { notifyDaysBefore: 3 }
   };
 }
@@ -597,6 +792,58 @@ function competVar(mk) {
   return s;
 }
 
+// ---------- Aportes ----------
+const POT_LABEL = { reserva: 'Reserva de emergência', caixa: 'Caixa de oportunidade' };
+function moves() { return state.invest.moves; }
+function potBalance(pot) {
+  let s = 0;
+  moves().forEach(m => {
+    if (m.kind === 'pot' && m.pot === pot) s += m.amount;
+    if (m.kind === 'buy' && m.origem === pot) s -= m.qty * m.price;
+    if (m.kind === 'sell' && m.destino === pot) s += m.qty * m.price;
+  });
+  return s;
+}
+function divBalance() {
+  let s = 0;
+  moves().forEach(m => {
+    if (m.kind === 'div') s += m.amount;
+    if (m.kind === 'buy' && m.origem === 'dividendos') s -= m.qty * m.price;
+  });
+  return s;
+}
+function positions() {
+  const p = {};
+  moves().slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(m => {
+    if (m.kind === 'init') p[m.ticker] = { qty: m.qty, pm: m.pm };
+    else if (m.kind === 'buy') {
+      const cur = p[m.ticker] || { qty: 0, pm: 0 };
+      const nq = cur.qty + m.qty;
+      p[m.ticker] = { qty: nq, pm: nq > 0 ? (cur.pm * cur.qty + m.price * m.qty) / nq : 0 };
+    } else if (m.kind === 'sell') {
+      const cur = p[m.ticker];
+      if (cur) cur.qty = Math.max(0, cur.qty - m.qty);
+    }
+  });
+  return p;
+}
+function aportesRenda(mk) {
+  return moves().reduce((s, m) => {
+    if (monthKey(new Date(m.date)) !== mk) return s;
+    if (m.kind === 'buy' && m.origem === 'renda') return s + m.qty * m.price;
+    if (m.kind === 'pot' && m.amount > 0 && m.origem === 'renda') return s + m.amount;
+    return s;
+  }, 0);
+}
+function investedMonth(mk) {
+  return moves().reduce((s, m) => {
+    if (monthKey(new Date(m.date)) !== mk) return s;
+    if (m.kind === 'buy') return s + m.qty * m.price;
+    if (m.kind === 'pot' && m.amount > 0 && m.origem === 'renda') return s + m.amount;
+    return s;
+  }, 0);
+}
+
 function billStatus(bill, mk) {
   const paid = state.payments[mk] && state.payments[mk][bill.id];
   if (paid) return 'paid';
@@ -617,6 +864,7 @@ function render() {
   renderRuler(mk);
   renderBills(mk);
   renderBudget(mk);
+  renderAportes(mk);
   updateBadge();
 }
 
@@ -738,11 +986,11 @@ function renderBudget(mk) {
   const avista = b => b.forma !== 'credito' || !state.card;
   const totFixa = bills.filter(b => b.category === 'fixa').reduce((s, b) => s + effectiveAmount(b, mk), 0);
   const totApto = bills.filter(b => b.category === 'apto').reduce((s, b) => s + effectiveAmount(b, mk), 0);
-  const totAporte = bills.filter(b => b.category === 'aporte').reduce((s, b) => s + effectiveAmount(b, mk), 0);
+  const totAporte = aportesRenda(mk);
   // Caixa: só o que sai da conta neste mês (contas à vista + fatura + variáveis à vista)
   const caixaFixa = bills.filter(b => b.category === 'fixa' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
   const caixaApto = bills.filter(b => b.category === 'apto' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
-  const caixaAporte = bills.filter(b => b.category === 'aporte' && avista(b)).reduce((s, b) => s + effectiveAmount(b, mk), 0);
+  const caixaAporte = totAporte;
   const expenses = state.expenses[mk] || [];
   const varAvista = expenses.filter(e => (e.forma || 'avista') !== 'credito').reduce((s, e) => s + e.amount, 0);
   const totVar = competVar(mk);
@@ -1089,6 +1337,297 @@ document.getElementById('income-record-clear').addEventListener('click', () => {
   save(); incomeRecordDialog.close(); render();
 });
 
+// ---------- Aportes: render e handlers ----------
+const KIND_LABEL = { buy: 'Compra', sell: 'Venda', div: 'Dividendo', pot: 'Pote', init: 'Posição inicial' };
+function renderAportes(mk) {
+  const apRenda = aportesRenda(mk);
+  const meta = state.invest.meta || 0;
+  document.getElementById('ap-mes').textContent = fmt(apRenda);
+  document.getElementById('ap-meta').textContent = fmt(meta);
+  const prog = document.getElementById('ap-progress');
+  prog.innerHTML = '';
+  const seg = document.createElement('div');
+  seg.style.background = 'var(--green)';
+  seg.style.width = Math.min(100, meta > 0 ? apRenda / meta * 100 : 0) + '%';
+  prog.appendChild(seg);
+  document.getElementById('ap-reserva').textContent = fmt(potBalance('reserva'));
+  document.getElementById('ap-caixa').textContent = fmt(potBalance('caixa'));
+  document.getElementById('ap-div').textContent = fmt(divBalance());
+  document.getElementById('ap-total-mes').textContent = fmt(investedMonth(mk));
+
+  const pos = positions();
+  const tickers = Object.keys(pos).filter(t => pos[t].qty > 0.0001).sort();
+  const posList = document.getElementById('position-list');
+  posList.innerHTML = '';
+  if (!tickers.length) {
+    posList.innerHTML = '<div class="empty" style="padding:16px">Sem posição ainda. Use "Posição inicial" para importar seus papéis da planilha, depois registre as compras por aqui.</div>';
+  } else {
+    let stampAt = 0;
+    tickers.forEach(t => {
+      const p = pos[t];
+      const q = state.invest.quotes[t];
+      let quoteHtml = '';
+      if (q && typeof q.price === 'number') {
+        stampAt = Math.max(stampAt, q.at || 0);
+        const vsPm = p.pm > 0 ? pct(q.price, p.pm) : 0;
+        const chg = typeof q.chg === 'number' ? q.chg : 0;
+        quoteHtml = '<div class="d">Atual ' + fmt(q.price) +
+          ' · dia <span class="' + (chg >= 0 ? 'var-down' : 'var-up') + '">' + fmtPct(chg) + '</span>' +
+          ' · vs PM <span class="' + (vsPm >= 0 ? 'var-down' : 'var-up') + '">' + fmtPct(vsPm) + '</span></div>';
+      }
+      const el = document.createElement('div');
+      el.className = 'expense';
+      el.innerHTML = '<div><div><strong>' + esc(t) + '</strong> · ' +
+        p.qty.toLocaleString('pt-BR', { maximumFractionDigits: 4 }) + ' un · PM ' + fmt(p.pm) + '</div>' +
+        quoteHtml + '</div><strong>' + fmt(p.qty * p.pm) + '</strong>';
+      posList.appendChild(el);
+    });
+    document.getElementById('quotes-stamp').textContent =
+      stampAt ? 'cotações de ' + new Date(stampAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+  }
+
+  const mvList = document.getElementById('moves-list');
+  mvList.innerHTML = '';
+  const monthMoves = moves().filter(m => monthKey(new Date(m.date)) === mk)
+    .sort((a, b) => a.date < b.date ? 1 : -1);
+  if (!monthMoves.length) {
+    mvList.innerHTML = '<div class="empty" style="padding:16px">Nenhum movimento neste mês.</div>';
+  } else {
+    monthMoves.forEach(m => {
+      let desc = '', val = 0;
+      if (m.kind === 'buy') { desc = 'Compra ' + m.ticker + ' · ' + m.qty + ' × ' + fmt(m.price) + ' · ' + (m.origem === 'renda' ? 'renda' : m.origem); val = m.qty * m.price; }
+      else if (m.kind === 'sell') { desc = 'Venda ' + m.ticker + ' · ' + m.qty + ' × ' + fmt(m.price) + ' → ' + m.destino; val = m.qty * m.price; }
+      else if (m.kind === 'div') { desc = 'Dividendo ' + (m.ticker || ''); val = m.amount; }
+      else if (m.kind === 'pot') { desc = POT_LABEL[m.pot] + (m.amount >= 0 ? ' · entrada' : ' · saída') + (m.origem === 'renda' ? ' (salário)' : ''); val = m.amount; }
+      else if (m.kind === 'init') { desc = 'Posição inicial ' + m.ticker + ' · ' + m.qty + ' un · PM ' + fmt(m.pm); val = m.qty * m.pm; }
+      const el = document.createElement('div');
+      el.className = 'expense';
+      el.innerHTML = '<div><div>' + esc(desc) + '</div><div class="d">' +
+        new Date(m.date).toLocaleDateString('pt-BR') + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:8px"><strong>' + fmt(val) +
+        '</strong><button aria-label="Remover">✕</button></div>';
+      el.querySelector('button').addEventListener('click', () => {
+        if (!confirm('Excluir este movimento? Saldos e posição serão recalculados.')) return;
+        state.invest.moves = moves().filter(x => x.id !== m.id);
+        save(); render();
+      });
+      mvList.appendChild(el);
+    });
+  }
+}
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function dlgDate(id) {
+  const v = document.getElementById(id).value;
+  return (v ? new Date(v + 'T12:00:00') : new Date()).toISOString();
+}
+
+const buyDialog = document.getElementById('buy-dialog');
+document.getElementById('add-buy').addEventListener('click', () => {
+  document.getElementById('buy-ticker').value = '';
+  document.getElementById('buy-qty').value = '';
+  document.getElementById('buy-price').value = '';
+  document.getElementById('buy-date').value = todayStr();
+  document.getElementById('buy-origem').value = 'renda';
+  buyDialog.showModal();
+});
+document.getElementById('buy-cancel').addEventListener('click', () => buyDialog.close());
+document.getElementById('buy-save').addEventListener('click', () => {
+  const ticker = document.getElementById('buy-ticker').value.trim().toUpperCase();
+  const qty = parseFloat(document.getElementById('buy-qty').value) || 0;
+  const price = parseFloat(document.getElementById('buy-price').value) || 0;
+  const origem = document.getElementById('buy-origem').value;
+  if (!ticker || qty <= 0 || price <= 0) return;
+  state.invest.moves.push({ id: uid(), kind: 'buy', ticker, qty, price, origem, date: dlgDate('buy-date') });
+  save(); buyDialog.close(); render();
+});
+
+const sellDialog = document.getElementById('sell-dialog');
+document.getElementById('add-sell').addEventListener('click', () => {
+  const pos = positions();
+  const tickers = Object.keys(pos).filter(t => pos[t].qty > 0.0001).sort();
+  if (!tickers.length) { alert('Sem posição para vender.'); return; }
+  document.getElementById('sell-ticker').innerHTML =
+    tickers.map(t => '<option value="' + t + '">' + t + ' (' + pos[t].qty.toLocaleString('pt-BR', { maximumFractionDigits: 4 }) + ' un)</option>').join('');
+  document.getElementById('sell-qty').value = '';
+  document.getElementById('sell-price').value = '';
+  document.getElementById('sell-date').value = todayStr();
+  sellDialog.showModal();
+});
+document.getElementById('sell-cancel').addEventListener('click', () => sellDialog.close());
+document.getElementById('sell-save').addEventListener('click', () => {
+  const ticker = document.getElementById('sell-ticker').value;
+  const qty = parseFloat(document.getElementById('sell-qty').value) || 0;
+  const price = parseFloat(document.getElementById('sell-price').value) || 0;
+  const destino = document.getElementById('sell-destino').value;
+  const pos = positions();
+  if (!ticker || qty <= 0 || price <= 0) return;
+  if (!pos[ticker] || qty > pos[ticker].qty + 0.0001) { alert('Quantidade maior que a posição (' + pos[ticker].qty + ').'); return; }
+  state.invest.moves.push({ id: uid(), kind: 'sell', ticker, qty, price, destino, date: dlgDate('sell-date') });
+  save(); sellDialog.close(); render();
+});
+
+const divDialog = document.getElementById('div-dialog');
+document.getElementById('add-div').addEventListener('click', () => {
+  document.getElementById('div-ticker').value = '';
+  document.getElementById('div-amount').value = '';
+  document.getElementById('div-date').value = todayStr();
+  divDialog.showModal();
+});
+document.getElementById('div-cancel').addEventListener('click', () => divDialog.close());
+document.getElementById('div-save').addEventListener('click', () => {
+  const ticker = document.getElementById('div-ticker').value.trim().toUpperCase();
+  const amount = parseFloat(document.getElementById('div-amount').value) || 0;
+  if (amount <= 0) return;
+  state.invest.moves.push({ id: uid(), kind: 'div', ticker, amount, date: dlgDate('div-date') });
+  save(); divDialog.close(); render();
+});
+
+const initDialog = document.getElementById('init-dialog');
+function parseBrNum(s) {
+  s = String(s).replace(/r\$/gi, '').replace(/\s/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  return parseFloat(s);
+}
+function parseInitCsv(text) {
+  const rows = [], errors = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    const raw = line.trim();
+    if (!raw) return;
+    if (/^tipo[;,\t]/i.test(raw)) return; // cabeçalho do export do app
+    let parts = raw.split(/[;\t]/).map(s => s.trim()).filter(s => s !== '');
+    if (parts.length === 1) parts = raw.split(/\s+/).filter(Boolean);
+    if (/^posicao_inicial$/i.test(parts[0])) parts = parts.slice(2); // formato do export: pula tipo e data
+    parts = parts.filter(p => !/^r\$$/i.test(p));
+    if (parts.length < 3) { errors.push('linha ' + (i + 1)); return; }
+    const ticker = parts[0].toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const qty = parseBrNum(parts[1]);
+    const pm = parseBrNum(parts[2]);
+    if (!ticker || !(qty > 0) || !(pm > 0)) { errors.push('linha ' + (i + 1)); return; }
+    rows.push({ ticker, qty, pm });
+  });
+  return { rows, errors };
+}
+function initPreview() {
+  const { rows, errors } = parseInitCsv(document.getElementById('init-text').value);
+  const el = document.getElementById('init-preview');
+  if (!rows.length && !errors.length) { el.textContent = ''; return; }
+  el.textContent = rows.length + ' papel(is) reconhecido(s): ' + rows.map(r => r.ticker).join(', ') +
+    (errors.length ? ' · Ignoradas: ' + errors.join(', ') : '');
+}
+document.getElementById('init-text').addEventListener('input', initPreview);
+document.getElementById('add-init').addEventListener('click', () => {
+  document.getElementById('init-text').value = '';
+  document.getElementById('init-preview').textContent = '';
+  initDialog.showModal();
+});
+document.getElementById('init-file-btn').addEventListener('click', () => document.getElementById('init-file').click());
+document.getElementById('init-file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { document.getElementById('init-text').value = r.result; initPreview(); };
+  r.readAsText(f);
+  e.target.value = '';
+});
+document.getElementById('init-cancel').addEventListener('click', () => initDialog.close());
+document.getElementById('init-save').addEventListener('click', () => {
+  const { rows, errors } = parseInitCsv(document.getElementById('init-text').value);
+  if (!rows.length) { alert('Nenhuma linha válida. Formato: TICKER;quantidade;preço médio'); return; }
+  rows.forEach(r => {
+    // substitui posição inicial existente do mesmo ticker (evita duplicar)
+    state.invest.moves = moves().filter(m => !(m.kind === 'init' && m.ticker === r.ticker));
+    state.invest.moves.push({ id: uid(), kind: 'init', ticker: r.ticker, qty: r.qty, pm: r.pm, date: new Date('2020-01-01T12:00:00').toISOString() });
+  });
+  save(); initDialog.close(); render();
+  alert(rows.length + ' papel(is) importado(s).' + (errors.length ? ' Linhas ignoradas: ' + errors.join(', ') : ''));
+});
+
+const potDialog = document.getElementById('pot-dialog');
+let potCurrent = null;
+function openPotDialog(pot) {
+  potCurrent = pot;
+  document.getElementById('pot-title').textContent = POT_LABEL[pot];
+  document.getElementById('pot-tipo').value = 'renda';
+  document.getElementById('pot-amount').value = '';
+  document.getElementById('pot-date').value = todayStr();
+  potDialog.showModal();
+}
+document.getElementById('pot-reserva').addEventListener('click', () => openPotDialog('reserva'));
+document.getElementById('pot-caixa').addEventListener('click', () => openPotDialog('caixa'));
+document.getElementById('pot-cancel').addEventListener('click', () => potDialog.close());
+document.getElementById('pot-save').addEventListener('click', () => {
+  const tipo = document.getElementById('pot-tipo').value;
+  let amount = parseFloat(document.getElementById('pot-amount').value) || 0;
+  if (amount <= 0) return;
+  if (tipo === 'saida') amount = -amount;
+  state.invest.moves.push({ id: uid(), kind: 'pot', pot: potCurrent, amount, origem: tipo === 'renda' ? 'renda' : 'outro', date: dlgDate('pot-date') });
+  save(); potDialog.close(); render();
+});
+
+const metaDialog = document.getElementById('meta-dialog');
+document.getElementById('ap-meta-card').addEventListener('click', () => {
+  document.getElementById('meta-amount').value = state.invest.meta || '';
+  metaDialog.showModal();
+});
+document.getElementById('meta-cancel').addEventListener('click', () => metaDialog.close());
+document.getElementById('meta-save').addEventListener('click', () => {
+  state.invest.meta = parseFloat(document.getElementById('meta-amount').value) || 0;
+  save(); metaDialog.close(); render();
+});
+
+document.getElementById('refresh-quotes').addEventListener('click', async () => {
+  const token = (state.invest.brapiToken || '').trim();
+  if (!token) { alert('Cole seu token da brapi em Ajustes → Cotações.'); return; }
+  const pos = positions();
+  const tickers = Object.keys(pos).filter(t => pos[t].qty > 0.0001);
+  if (!tickers.length) { alert('Sem posição para cotar.'); return; }
+  const btn = document.getElementById('refresh-quotes');
+  btn.disabled = true; btn.textContent = 'Atualizando…';
+  let ok = 0;
+  for (const t of tickers) {
+    try {
+      const r = await fetch('https://brapi.dev/api/quote/' + encodeURIComponent(t) + '?token=' + encodeURIComponent(token));
+      const j = await r.json();
+      const q = j.results && j.results[0];
+      if (q && typeof q.regularMarketPrice === 'number') {
+        state.invest.quotes[t] = { price: q.regularMarketPrice, chg: q.regularMarketChangePercent, at: Date.now() };
+        ok++;
+      }
+    } catch (_) {}
+  }
+  btn.disabled = false; btn.textContent = 'Atualizar cotações';
+  save(); render();
+  if (!ok) alert('Não consegui atualizar. Confira o token e a conexão.');
+});
+
+document.getElementById('export-csv').addEventListener('click', () => {
+  const num = v => (typeof v === 'number' ? String(v).replace('.', ',') : (v || ''));
+  const rows = [['tipo', 'data', 'ticker', 'quantidade', 'preco_valor', 'origem_destino']];
+  moves().slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(m => {
+    if (m.kind === 'buy') rows.push(['compra', m.date.slice(0, 10), m.ticker, num(m.qty), num(m.price), m.origem]);
+    else if (m.kind === 'sell') rows.push(['venda', m.date.slice(0, 10), m.ticker, num(m.qty), num(m.price), m.destino]);
+    else if (m.kind === 'div') rows.push(['dividendo', m.date.slice(0, 10), m.ticker || '', '', num(m.amount), '']);
+    else if (m.kind === 'pot') rows.push(['pote_' + m.pot, m.date.slice(0, 10), '', '', num(m.amount), m.origem]);
+    else if (m.kind === 'init') rows.push(['posicao_inicial', m.date.slice(0, 10), m.ticker, num(m.qty), num(m.pm), '']);
+  });
+  const csv = rows.map(r => r.join(';')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'aportes-' + monthKey(new Date()) + '.csv';
+  a.click();
+});
+
+document.getElementById('save-token').addEventListener('click', () => {
+  state.invest.brapiToken = document.getElementById('brapi-token').value.trim();
+  save();
+  alert(state.invest.brapiToken ? 'Token salvo neste aparelho.' : 'Token removido.');
+});
+
 // ---------- Cartão: configuração e conferência ----------
 const cardDialog = document.getElementById('card-dialog');
 document.getElementById('edit-card').addEventListener('click', () => {
@@ -1154,8 +1693,9 @@ document.querySelectorAll('nav button').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     document.getElementById('page-title').textContent =
-      { contas: 'Contas', orcamento: 'Orçamento', ajustes: 'Ajustes' }[btn.dataset.tab];
-    document.getElementById('ruler').style.display = btn.dataset.tab === 'ajustes' ? 'none' : 'block';
+      { contas: 'Contas', orcamento: 'Orçamento', aportes: 'Aportes', ajustes: 'Ajustes' }[btn.dataset.tab];
+    document.getElementById('ruler').style.display =
+      (btn.dataset.tab === 'ajustes' || btn.dataset.tab === 'aportes') ? 'none' : 'block';
   });
 });
 
@@ -1258,7 +1798,9 @@ document.getElementById('import-file').addEventListener('change', (e) => {
       if (!('card' in data)) data.card = null;
       if (!data.faturaAjuste) data.faturaAjuste = {};
       if (!data.faturaConferida) data.faturaConferida = {};
+      if (!data.invest) data.invest = { meta: 0, moves: [], quotes: {}, brapiToken: '' };
       state = data; save(); render(); renderCardInfo();
+      document.getElementById('brapi-token').value = state.invest.brapiToken || '';
       alert('Backup importado com sucesso.');
     } catch (_) { alert('Arquivo inválido.'); }
   };
@@ -1271,6 +1813,7 @@ if ('serviceWorker' in navigator) {
 }
 render();
 renderCardInfo();
+document.getElementById('brapi-token').value = state.invest.brapiToken || '';
 refreshNotifyStatus();
 </script>
 </body>
