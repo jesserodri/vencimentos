@@ -163,6 +163,15 @@ dialog h2{font-size:17px; margin-bottom:14px}
 .hist-row:last-child{border-bottom:none}
 .hist-row .mk{color:var(--muted); text-transform:capitalize}
 .hist-title{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin:14px 0 4px; font-weight:600}
+#toast{
+  position:fixed; left:50%; bottom:calc(84px + env(safe-area-inset-bottom));
+  transform:translateX(-50%) translateY(20px);
+  background:var(--ink); color:#fff; font-size:14px; line-height:1.4;
+  padding:12px 18px; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.25);
+  max-width:min(90vw, 420px); text-align:center;
+  opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; z-index:99;
+}
+#toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
 </style>
 </head>
 <body>
@@ -289,6 +298,8 @@ dialog h2{font-size:17px; margin-bottom:14px}
     </div>
   </section>
 </main>
+
+<div id="toast" role="status" aria-live="polite"></div>
 
 <nav>
   <button data-tab="contas" class="active"><span class="ico">✓</span>Contas</button>
@@ -958,7 +969,7 @@ function renderBills(mk) {
       el.innerHTML =
         '<button class="check" aria-label="' + (bill.autopay || onCard ? 'Confirmar valor' : 'Marcar como paga') + '">✓</button>' +
         '<div class="info"><div class="name">' + esc(bill.name) + '</div>' +
-        '<div class="meta">Dia ' + day + ' · ' + CAT_LABEL[bill.category] + ' ' + badge + '</div></div>' +
+        '<div class="meta">Dia ' + day + ' · ' + (isFatura ? 'fecha dia ' + state.card.closeDay : CAT_LABEL[bill.category]) + ' ' + badge + '</div></div>' +
         '<div class="amount">' + fmt(eff) + varTag + '</div>';
 
       el.querySelector('.check').addEventListener('click', () => togglePaid(bill.id, mk));
@@ -1081,23 +1092,42 @@ function renderBudget(mk) {
 
   const exList = document.getElementById('expenses-list');
   exList.innerHTML = '';
-  if (!expenses.length) {
-    exList.innerHTML = '<div class="empty">Nenhum gasto lançado neste mês.</div>';
+  // Linhas do mês: à vista lançados no mês + parcelas de crédito cujo ciclo cai neste mês
+  const rows = [];
+  (state.expenses[mk] || []).forEach(e => {
+    if ((e.forma || 'avista') !== 'credito' || !state.card) rows.push({ e, amount: e.amount, label: '', date: e.date });
+  });
+  if (state.card) {
+    Object.values(state.expenses).flat().forEach(e => {
+      if ((e.forma || 'avista') !== 'credito' || !e.date) return;
+      chargeInstallments(e).forEach(ch => {
+        if (ch.mk === mk) rows.push({ e, amount: ch.amount, label: ch.label, date: e.date, credito: true });
+      });
+    });
+  }
+  rows.sort((a, b) => a.date < b.date ? 1 : -1);
+  if (!rows.length) {
+    exList.innerHTML = '<div class="empty">Nenhum gasto pesando neste mês.</div>';
   } else {
-    expenses.slice().reverse().forEach(e => {
+    rows.forEach(r => {
+      const e = r.e;
       const el = document.createElement('div');
       el.className = 'expense';
-      const credTag = (e.forma === 'credito')
-        ? ' <span class="badge auto">cartão' + (e.parcelas > 1 ? ' ' + e.parcelas + 'x' : '') + '</span>'
+      const credTag = r.credito
+        ? ' <span class="badge auto">cartão' + (r.label ? ' · parcela ' + r.label : '') + '</span>'
         : '';
-      const estTag = e.amount < 0 ? ' <span class="badge paid" style="background:var(--green-soft);color:var(--green)">estorno</span>' : '';
+      const estTag = r.amount < 0 ? ' <span class="badge paid" style="background:var(--green-soft);color:var(--green)">estorno</span>' : '';
       el.innerHTML = '<div><div>' + esc(e.desc) + credTag + estTag + '</div><div class="d">' +
-        new Date(e.date).toLocaleDateString('pt-BR') + '</div></div>' +
-        '<div style="display:flex;align-items:center;gap:8px"><strong' + (e.amount < 0 ? ' class="var-down"' : '') + '>' + fmt(e.amount) +
+        (r.label ? 'compra de ' : '') + new Date(e.date).toLocaleDateString('pt-BR') + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:8px"><strong' + (r.amount < 0 ? ' class="var-down"' : '') + '>' + fmt(r.amount) +
         '</strong><button aria-label="Remover">✕</button></div>';
       el.querySelector('button').addEventListener('click', () => {
-        if (e.forma === 'credito' && e.parcelas > 1 && !confirm('Excluir esta compra parcelada? Todas as parcelas (passadas e futuras) saem das faturas.')) return;
-        state.expenses[mk] = (state.expenses[mk] || []).filter(x => x.id !== e.id);
+        const msg = (e.forma === 'credito' && e.parcelas > 1)
+          ? 'Excluir a compra inteira? Todas as parcelas (passadas e futuras) saem das faturas.'
+          : 'Excluir este lançamento?';
+        if (!confirm(msg)) return;
+        const storeMk = monthKey(new Date(e.date));
+        state.expenses[storeMk] = (state.expenses[storeMk] || []).filter(x => x.id !== e.id);
         save(); render();
       });
       exList.appendChild(el);
@@ -1106,6 +1136,15 @@ function renderBudget(mk) {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+let toastTimer = null;
+function toast(msg, ms = 3000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
 
 let payingBillId = null, payingMk = null;
 const payDialog = document.getElementById('pay-dialog');
@@ -1242,8 +1281,16 @@ document.getElementById('exp-save').addEventListener('click', () => {
   const date = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
   const mkStore = monthKey(date);
   state.expenses[mkStore] = state.expenses[mkStore] || [];
-  state.expenses[mkStore].push({ id: uid(), desc, amount, date: date.toISOString(), forma, parcelas });
+  const novo = { id: uid(), desc, amount, date: date.toISOString(), forma, parcelas };
+  state.expenses[mkStore].push(novo);
   save(); expenseDialog.close(); render();
+  if (forma === 'credito' && state.card) {
+    const chs = chargeInstallments(novo);
+    const primeiro = chs[0].mk, ultimo = chs[chs.length - 1].mk;
+    toast(parcelas > 1
+      ? '✓ ' + parcelas + ' parcelas de ' + fmt(amount / parcelas) + ' — fatura de ' + mkLabel(primeiro) + ' a ' + mkLabel(ultimo)
+      : '✓ Cai na fatura de ' + mkLabel(primeiro) + ' (vence dia ' + state.card.dueDay + ')');
+  }
 });
 
 const budgetDialog = document.getElementById('budget-dialog');
@@ -1639,9 +1686,12 @@ document.getElementById('edit-card').addEventListener('click', () => {
 document.getElementById('card-cancel').addEventListener('click', () => cardDialog.close());
 document.getElementById('card-save').addEventListener('click', () => {
   const name = document.getElementById('card-name').value.trim();
-  const closeDay = Math.min(31, Math.max(1, parseInt(document.getElementById('card-close').value) || 0));
-  const dueDay = Math.min(31, Math.max(1, parseInt(document.getElementById('card-due').value) || 0));
-  if (!name || !closeDay || !dueDay) return;
+  const closeDay = parseInt(document.getElementById('card-close').value);
+  const dueDay = parseInt(document.getElementById('card-due').value);
+  if (!name || !(closeDay >= 1 && closeDay <= 31) || !(dueDay >= 1 && dueDay <= 31)) {
+    alert('Preencha nome, dia de fechamento e dia de vencimento (1 a 31).');
+    return;
+  }
   state.card = { name, closeDay, dueDay };
   save(); cardDialog.close(); render(); renderCardInfo();
 });
