@@ -405,7 +405,13 @@ dialog h2{font-size:17px; margin-bottom:14px}
   <div class="field">
     <label for="income-amount">Valor de referência (R$)</label>
     <input id="income-amount" type="number" inputmode="decimal" step="0.01" min="0">
-    <div class="hint">Estimativa. Todo mês você registra o valor real recebido.</div>
+    <div class="hint" id="income-amount-hint">Estimativa. Todo mês você registra o valor real recebido.</div>
+  </div>
+  <label class="check-inline"><input type="checkbox" id="income-porhora"> Calculada por horas (competência: mês anterior)</label>
+  <div class="field" id="income-taxa-field" style="display:none">
+    <label for="income-taxa">Taxa por hora (R$)</label>
+    <input id="income-taxa" type="number" inputmode="decimal" step="0.01" min="0" placeholder="33,00">
+    <div class="hint">Horas de um mês compõem o recebimento do mês seguinte. Se não houver horas lançadas, vale o valor de referência acima. Reajuste? Mude aqui — só as horas novas usam a taxa nova.</div>
   </div>
   <div id="income-history"></div>
   <div class="dialog-actions">
@@ -608,6 +614,29 @@ CMIG4;165;12,02"></textarea>
   </div>
 </dialog>
 
+<dialog id="hours-dialog">
+  <h2 id="hours-title">Horas trabalhadas</h2>
+  <div class="field-row">
+    <div class="field">
+      <label for="hours-qty">Horas</label>
+      <input id="hours-qty" type="number" inputmode="decimal" step="0.5" min="0" placeholder="2">
+    </div>
+    <div class="field">
+      <label for="hours-date">Data</label>
+      <input id="hours-date" type="date">
+    </div>
+  </div>
+  <div class="field">
+    <label for="hours-desc">Descrição (opcional)</label>
+    <input id="hours-desc" type="text" placeholder="Ex.: Excel manhã">
+  </div>
+  <button class="ghost" id="hours-add" style="margin-top:0">+ Adicionar</button>
+  <div id="hours-list" style="max-height:200px;overflow-y:auto;margin-top:10px"></div>
+  <div class="dialog-actions">
+    <button class="cancel" id="hours-close">Fechar</button>
+  </div>
+</dialog>
+
 <dialog id="income-record-dialog">
   <h2 id="income-record-title">Registrar recebimento</h2>
   <div class="field">
@@ -665,6 +694,7 @@ function load() {
         data.invest.meta = aporteBills.reduce((s, b) => s + b.amount, 0);
         aporteBills.forEach(b => { b.active = false; });
       }
+      if (!data.hours) data.hours = [];
       return data;
     }
   } catch (_) {}
@@ -679,6 +709,7 @@ function load() {
     faturaAjuste: {},
     faturaConferida: {},
     invest: { meta: 0, moves: [], quotes: {}, brapiToken: '' },
+    hours: [],
     settings: { notifyDaysBefore: 3 }
   };
 }
@@ -718,9 +749,27 @@ function incomeRecord(srcId, mk) {
   const r = state.incomeRecords[mk];
   return (r && typeof r[srcId] === 'number') ? r[srcId] : null;
 }
+function hoursOf(srcId, compMk) {
+  return (state.hours || []).filter(h => h.srcId === srcId && monthKey(new Date(h.date)) === compMk);
+}
+function hoursProjection(src, mk) {
+  const comp = shiftMk(mk, -1);
+  const list = hoursOf(src.id, comp);
+  return {
+    compMk: comp,
+    count: list.length,
+    hours: list.reduce((s, h) => s + h.hours, 0),
+    value: list.reduce((s, h) => s + h.hours * h.rate, 0)
+  };
+}
 function effectiveIncome(src, mk) {
   const rec = incomeRecord(src.id, mk);
-  return rec !== null ? rec : src.amount;
+  if (rec !== null) return rec;
+  if (src.porHora) {
+    const p = hoursProjection(src, mk);
+    if (p.count > 0) return p.value;
+  }
+  return src.amount;
 }
 function monthIncome(mk) {
   return state.incomeSources.filter(s => s.active !== false)
@@ -1045,15 +1094,27 @@ function renderBudget(mk) {
         const d = pct(rec, prev.amount);
         if (Math.abs(d) >= 0.5) varTag = ' <span class="' + (d > 0 ? 'var-down' : 'var-up') + '" style="font-size:12px">' + fmtPct(d) + '</span>';
       }
+      let sub;
+      if (src.porHora) {
+        const p = hoursProjection(src, mk);        // o que compõe ESTE mês
+        const next = hoursProjection(src, shiftMk(mk, 1)); // o que está sendo construído
+        sub = rec !== null ? 'Registrado' :
+          (p.count > 0 ? p.hours.toLocaleString('pt-BR') + 'h de ' + mkLabel(p.compMk) + ' × ' + fmt(src.taxa || 0) : 'Referência (sem horas em ' + mkLabel(p.compMk) + ')');
+        sub += ' · construindo: ' + next.hours.toLocaleString('pt-BR') + 'h → ' + fmt(next.value) + ' em ' + mkLabel(shiftMk(mk, 1));
+      } else {
+        sub = rec !== null ? 'Registrado' : 'Referência (toque para registrar)';
+      }
       const el = document.createElement('div');
       el.className = 'expense';
       el.style.cursor = 'pointer';
-      el.innerHTML = '<div><div>' + esc(src.name) + '</div><div class="d">' +
-        (rec !== null ? 'Registrado' : 'Referência (toque para registrar)') + '</div></div>' +
+      el.innerHTML = '<div><div>' + esc(src.name) + '</div><div class="d">' + sub + '</div></div>' +
         '<div style="display:flex;align-items:center;gap:8px"><strong>' + fmt(eff) + '</strong>' + varTag +
+        (src.porHora ? '<button aria-label="Lançar horas" data-h="1">＋h</button>' : '') +
         '<button aria-label="Editar fonte">✎</button></div>';
       el.addEventListener('click', () => openIncomeRecordDialog(src.id, mk));
-      el.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); openIncomeDialog(src.id); });
+      el.querySelector('button[aria-label="Editar fonte"]').addEventListener('click', (e) => { e.stopPropagation(); openIncomeDialog(src.id); });
+      const hBtn = el.querySelector('button[data-h]');
+      if (hBtn) hBtn.addEventListener('click', (e) => { e.stopPropagation(); openHoursDialog(src.id); });
       incList.appendChild(el);
     });
   }
@@ -1315,6 +1376,9 @@ function openIncomeDialog(id) {
   document.getElementById('income-dialog-title').textContent = s ? 'Editar fonte de renda' : 'Nova fonte de renda';
   document.getElementById('income-name').value = s ? s.name : '';
   document.getElementById('income-amount').value = s ? s.amount : '';
+  document.getElementById('income-porhora').checked = s ? !!s.porHora : false;
+  document.getElementById('income-taxa').value = (s && s.taxa) ? s.taxa : '';
+  syncPorHora();
   document.getElementById('income-delete').style.display = s ? 'block' : 'none';
   const histEl = document.getElementById('income-history');
   histEl.innerHTML = '';
@@ -1336,16 +1400,27 @@ function openIncomeDialog(id) {
   }
   incomeDialog.showModal();
 }
+function syncPorHora() {
+  const on = document.getElementById('income-porhora').checked;
+  document.getElementById('income-taxa-field').style.display = on ? 'block' : 'none';
+  document.getElementById('income-amount-hint').textContent = on
+    ? 'Usado quando não houver horas lançadas no mês de competência.'
+    : 'Estimativa. Todo mês você registra o valor real recebido.';
+}
+document.getElementById('income-porhora').addEventListener('change', syncPorHora);
 document.getElementById('add-income').addEventListener('click', () => openIncomeDialog(null));
 document.getElementById('income-cancel').addEventListener('click', () => incomeDialog.close());
 document.getElementById('income-save').addEventListener('click', () => {
   const name = document.getElementById('income-name').value.trim();
   const amount = parseFloat(document.getElementById('income-amount').value) || 0;
+  const porHora = document.getElementById('income-porhora').checked;
+  const taxa = parseFloat(document.getElementById('income-taxa').value) || 0;
   if (!name) return;
+  if (porHora && !(taxa > 0)) { alert('Informe a taxa por hora.'); return; }
   if (editingIncomeId) {
-    Object.assign(state.incomeSources.find(s => s.id === editingIncomeId), { name, amount });
+    Object.assign(state.incomeSources.find(s => s.id === editingIncomeId), { name, amount, porHora, taxa });
   } else {
-    state.incomeSources.push({ id: uid(), name, amount, active: true });
+    state.incomeSources.push({ id: uid(), name, amount, porHora, taxa, active: true });
   }
   save(); incomeDialog.close(); render();
 });
@@ -1357,16 +1432,69 @@ document.getElementById('income-delete').addEventListener('click', () => {
   save(); incomeDialog.close(); render();
 });
 
+// ---------- Horas trabalhadas ----------
+const hoursDialog = document.getElementById('hours-dialog');
+let hoursSrcId = null;
+function renderHoursList() {
+  const src = state.incomeSources.find(s => s.id === hoursSrcId);
+  const compMk = monthKey(viewDate); // horas do mês visualizado
+  const list = hoursOf(hoursSrcId, compMk).slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  const el = document.getElementById('hours-list');
+  const tot = list.reduce((s, h) => s + h.hours, 0);
+  const val = list.reduce((s, h) => s + h.hours * h.rate, 0);
+  document.getElementById('hours-title').textContent =
+    src.name + ' — horas de ' + mkLabel(compMk) + ' (' + tot.toLocaleString('pt-BR') + 'h → ' + fmt(val) + ' em ' + mkLabel(shiftMk(compMk, 1)) + ')';
+  el.innerHTML = list.length ? '' : '<div class="hint">Nenhuma hora lançada em ' + mkLabel(compMk) + '. Navegue entre meses (setas no topo) para lançar em outro mês.</div>';
+  list.forEach(h => {
+    const row = document.createElement('div');
+    row.className = 'hist-row';
+    row.innerHTML = '<span class="mk">' + new Date(h.date).toLocaleDateString('pt-BR') +
+      (h.desc ? ' · ' + esc(h.desc) : '') + '</span><span>' +
+      h.hours.toLocaleString('pt-BR') + 'h × ' + fmt(h.rate) +
+      ' <button style="background:none;border:none;color:var(--muted);cursor:pointer">✕</button></span>';
+    row.querySelector('button').addEventListener('click', () => {
+      state.hours = state.hours.filter(x => x.id !== h.id);
+      save(); renderHoursList(); render();
+    });
+    el.appendChild(row);
+  });
+}
+function openHoursDialog(srcId) {
+  hoursSrcId = srcId;
+  document.getElementById('hours-qty').value = '';
+  document.getElementById('hours-desc').value = '';
+  document.getElementById('hours-date').value = todayStr();
+  renderHoursList();
+  hoursDialog.showModal();
+}
+document.getElementById('hours-add').addEventListener('click', () => {
+  const src = state.incomeSources.find(s => s.id === hoursSrcId);
+  const qty = parseFloat(document.getElementById('hours-qty').value) || 0;
+  const desc = document.getElementById('hours-desc').value.trim();
+  if (!(qty > 0)) return;
+  state.hours.push({ id: uid(), srcId: hoursSrcId, hours: qty, desc, rate: src.taxa || 0, date: dlgDate('hours-date') });
+  document.getElementById('hours-qty').value = '';
+  document.getElementById('hours-desc').value = '';
+  save(); renderHoursList(); render();
+  toast('✓ ' + qty.toLocaleString('pt-BR') + 'h lançadas — recebe em ' + mkLabel(shiftMk(monthKey(new Date(dlgDate('hours-date'))), 1)));
+});
+document.getElementById('hours-close').addEventListener('click', () => hoursDialog.close());
+
 function openIncomeRecordDialog(srcId, mk) {
   const src = state.incomeSources.find(s => s.id === srcId);
   recordingIncomeId = srcId; recordingMk = mk;
   document.getElementById('income-record-title').textContent = 'Recebimento — ' + src.name;
   const rec = incomeRecord(srcId, mk);
-  document.getElementById('income-record-amount').value = rec !== null ? rec : (src.amount || '');
+  const proj = src.porHora ? hoursProjection(src, mk) : null;
+  const base = (proj && proj.count > 0) ? proj.value : src.amount;
+  document.getElementById('income-record-amount').value = rec !== null ? rec : (base || '');
   const prev = prevIncomeRecorded(src, mk);
-  document.getElementById('income-record-hint').textContent = prev
-    ? 'Referência: ' + fmt(src.amount) + ' · Último registrado (' + mkLabel(prev.mk) + '): ' + fmt(prev.amount)
-    : 'Referência: ' + fmt(src.amount) + ' — ajuste para o valor que realmente entrou.';
+  let hint = (proj && proj.count > 0)
+    ? 'Projetado: ' + proj.hours.toLocaleString('pt-BR') + 'h de ' + mkLabel(proj.compMk) + ' × ' + fmt(src.taxa || 0) + ' = ' + fmt(proj.value)
+    : 'Referência: ' + fmt(src.amount);
+  if (prev) hint += ' · Último registrado (' + mkLabel(prev.mk) + '): ' + fmt(prev.amount);
+  else if (!proj || !proj.count) hint += ' — ajuste para o valor que realmente entrou.';
+  document.getElementById('income-record-hint').textContent = hint;
   document.getElementById('income-record-clear').style.display = rec !== null ? 'block' : 'none';
   incomeRecordDialog.showModal();
   document.getElementById('income-record-amount').select();
@@ -1849,6 +1977,7 @@ document.getElementById('import-file').addEventListener('change', (e) => {
       if (!data.faturaAjuste) data.faturaAjuste = {};
       if (!data.faturaConferida) data.faturaConferida = {};
       if (!data.invest) data.invest = { meta: 0, moves: [], quotes: {}, brapiToken: '' };
+      if (!data.hours) data.hours = [];
       state = data; save(); render(); renderCardInfo();
       document.getElementById('brapi-token').value = state.invest.brapiToken || '';
       alert('Backup importado com sucesso.');
